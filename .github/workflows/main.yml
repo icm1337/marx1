@@ -1,28 +1,12 @@
-name: RustDesk Remote Desktop Windows
+name: RustDesk Remote Desktop (Windows)
 
 on:
   workflow_dispatch:
     inputs:
-      RUSTDESK_PASSWORD:
-        description: "RustDesk unattended access password"
+      PASSWORD:
+        description: "Permanent password for RustDesk (8+ chars recommended)"
         required: true
-        default: "123456"
-      RUSTDESK_ID_SERVER:
-        description: "Optional RustDesk ID server"
-        required: false
-        default: ""
-      RUSTDESK_RELAY_SERVER:
-        description: "Optional RustDesk relay server"
-        required: false
-        default: ""
-      RUSTDESK_API_SERVER:
-        description: "Optional RustDesk API server"
-        required: false
-        default: ""
-      RUSTDESK_KEY:
-        description: "Optional RustDesk server key"
-        required: false
-        default: ""
+        default: "ChangeMe123!"
 
 jobs:
   rustdesk:
@@ -61,101 +45,60 @@ jobs:
       # Install RustDesk
       - name: Download RustDesk
         run: |
-          Write-Host "Getting latest RustDesk release..."
+          $url = "https://github.com/rustdesk/rustdesk/releases/download/1.3.8/rustdesk-1.3.8-x86_64.exe"
+          Invoke-WebRequest -Uri $url -OutFile "rustdesk.exe"
 
-          $release = Invoke-RestMethod "https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
+      - name: Install RustDesk silently
+        run: |
+          # Silent install flag for RustDesk
+          Start-Process ".\rustdesk.exe" -ArgumentList "--silent-install" -Wait
+          Start-Sleep -Seconds 15
 
-          $asset = $release.assets | Where-Object {
-            $_.name -match "x86_64.*\.exe$" -and
-            $_.name -notmatch "sciter" -and
-            $_.name -notmatch "aarch64"
-          } | Select-Object -First 1
-
-          if (-not $asset) {
-            Write-Error "Could not find RustDesk Windows x86_64 installer."
+      - name: Start RustDesk service
+        run: |
+          $exe = "C:\Program Files\RustDesk\rustdesk.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "RustDesk not found at $exe"
             exit 1
           }
 
-          Write-Host "Downloading $($asset.name)"
-          Invoke-WebRequest $asset.browser_download_url -OutFile "rustdesk.exe"
-
-      - name: Install RustDesk
-        run: |
-          Write-Host "Installing RustDesk..."
-
-          Start-Process ".\rustdesk.exe" -ArgumentList "--silent-install" -Wait
-
+          # Install & start the RustDesk service (required for unattended access)
+          Start-Process $exe -ArgumentList "--install-service" -Wait
           Start-Sleep -Seconds 10
 
-          $rustdeskPath = "C:\Program Files\RustDesk\rustdesk.exe"
-
-          if (-not (Test-Path $rustdeskPath)) {
-            Write-Error "RustDesk installation failed. rustdesk.exe not found."
-            exit 1
-          }
-
-          Write-Host "RustDesk installed successfully."
-
-      - name: Configure RustDesk
+      # Configure RustDesk
+      - name: Set RustDesk permanent password
         run: |
-          $rustdeskPath = "C:\Program Files\RustDesk\rustdesk.exe"
+          $exe = "C:\Program Files\RustDesk\rustdesk.exe"
+          $password = "$ github.event.inputs.PASSWORD "
 
-          $password = "$ github.event.inputs.RUSTDESK_PASSWORD "
-          $idServer = "$ github.event.inputs.RUSTDESK_ID_SERVER "
-          $relayServer = "$ github.event.inputs.RUSTDESK_RELAY_SERVER "
-          $apiServer = "$ github.event.inputs.RUSTDESK_API_SERVER "
-          $key = "$ github.event.inputs.RUSTDESK_KEY "
-
-          Write-Host "Starting RustDesk service..."
-
-          Start-Service RustDesk -ErrorAction SilentlyContinue
+          # Set the permanent password used for incoming connections
+          & $exe --password "$password"
           Start-Sleep -Seconds 5
 
-          Write-Host "Setting RustDesk password..."
-          & $rustdeskPath --password $password
-
-          if ($idServer -ne "") {
-            Write-Host "Setting RustDesk ID server..."
-            & $rustdeskPath --config rendezvous-server=$idServer
-          }
-
-          if ($relayServer -ne "") {
-            Write-Host "Setting RustDesk relay server..."
-            & $rustdeskPath --config relay-server=$relayServer
-          }
-
-          if ($apiServer -ne "") {
-            Write-Host "Setting RustDesk API server..."
-            & $rustdeskPath --config api-server=$apiServer
-          }
-
-          if ($key -ne "") {
-            Write-Host "Setting RustDesk key..."
-            & $rustdeskPath --config key=$key
-          }
-
-          Restart-Service RustDesk -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 10
-
-      - name: Show RustDesk connection info
+      - name: Get RustDesk ID
         run: |
-          $rustdeskPath = "C:\Program Files\RustDesk\rustdesk.exe"
+          $exe = "C:\Program Files\RustDesk\rustdesk.exe"
 
-          Write-Host "Getting RustDesk ID..."
-          $id = & $rustdeskPath --get-id
+          # The ID may take a few seconds to be assigned after the service starts
+          $id = $null
+          for ($i = 0; $i -lt 12; $i++) {
+            $id = (& $exe --get-id) 2>$null
+            if ($id -and $id.Trim().Length -gt 0) { break }
+            Start-Sleep -Seconds 5
+          }
 
-          Write-Host "=========================================="
-          Write-Host "RustDesk is ready."
-          Write-Host "RustDesk ID: $id"
-          Write-Host "Password: $ github.event.inputs.RUSTDESK_PASSWORD "
-          Write-Host "Use the RustDesk app to connect."
-          Write-Host "=========================================="
+          Write-Host "==============================================="
+          Write-Host " RustDesk is ready."
+          Write-Host " ID:       $id"
+          Write-Host " Password: (the PASSWORD input you provided)"
+          Write-Host " Client:   https://rustdesk.com/  (download for your OS)"
+          Write-Host "==============================================="
 
       # Keep alive + countdown
-      - name: Keep machine alive with timer 6 hours
+      - name: Keep machine alive with timer (6 hours)
         run: |
-          Write-Host "Machine ready."
-          Write-Host "Connect using RustDesk."
+          Write-Host "Machine ready. Connect with RustDesk using the ID + password above."
 
           $totalMinutes = 360
           $interval = 30
