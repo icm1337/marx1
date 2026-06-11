@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       PASSWORD:
-        description: "Permanent password for RustDesk (8+ chars recommended)"
+        description: "Permanent password for RustDesk (8+ chars)"
         required: true
         default: "ChangeMe123!"
 
@@ -17,75 +17,78 @@ jobs:
       - name: Show system info
         run: systeminfo
 
-      # Install tools
       - name: Install 7-Zip, Python, and Go
         run: |
-          Write-Host "Downloading installers..."
-
           Invoke-WebRequest "https://github.com/ip7z/7zip/releases/download/25.01/7z2501-x64.exe" -OutFile "7zip.exe"
           Invoke-WebRequest "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" -OutFile "python.exe"
           Invoke-WebRequest "https://go.dev/dl/go1.22.5.windows-amd64.msi" -OutFile "go.msi"
 
-          Write-Host "Installing..."
-
           Start-Process ".\7zip.exe"  -ArgumentList "/S" -Wait
           Start-Process ".\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
-          Start-Process "msiexec.exe" -ArgumentList "/i go.msi /quiet /norestart" -Wait
+          Start-Process "msiexec.exe"  -ArgumentList "/i go.msi /quiet /norestart" -Wait
 
-      - name: Install Python requests package
+      - name: Install Python requests
         run: |
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Verify installations
+      - name: Verify installs
         run: |
           python --version
           pip show requests
           go version
 
-      # Install RustDesk via Chocolatey (reliable on GitHub runners)
-      - name: Install RustDesk via Chocolatey
+      - name: Install RustDesk (with timeout + force-kill)
         run: |
-          choco install rustdesk -y --no-progress
-          Start-Sleep -Seconds 10
+          $url = "https://github.com/rustdesk/rustdesk/releases/download/1.3.8/rustdesk-1.3.8-x86_64.exe"
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\rustdesk.exe"
 
-      - name: Locate RustDesk executable
-        id: locate
-        run: |
-          $candidates = @(
-            "C:\Program Files\RustDesk\rustdesk.exe",
-            "C:\Program Files (x86)\RustDesk\rustdesk.exe"
-          )
-          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $exe) {
-            Write-Error "RustDesk executable not found after install."
+          Write-Host "Launching installer (max 2 min)..."
+          $proc = Start-Process "$env:TEMP\rustdesk.exe" `
+            -ArgumentList "--silent-install" -PassThru
+          $exited = $proc.WaitForExit(120000)
+
+          if (-not $exited) {
+            Write-Host "Installer hung — killing it."
+            Get-Process -Name "rustdesk*" -ErrorAction SilentlyContinue |
+              Stop-Process -Force
+            Start-Sleep -Seconds 5
+          }
+
+          $exe = "C:\Program Files\RustDesk\rustdesk.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "RustDesk binary missing at $exe"
             exit 1
           }
-          Write-Host "Found RustDesk at: $exe"
           "RUSTDESK_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Install and start RustDesk service
         run: |
-          Start-Process "$env:RUSTDESK_EXE" -ArgumentList "--install-service" -Wait
+          $proc = Start-Process "$env:RUSTDESK_EXE" `
+            -ArgumentList "--install-service" -PassThru
+          $proc.WaitForExit(60000) | Out-Null
+          Get-Process -Name "rustdesk*" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Id -eq $proc.Id } | Stop-Process -Force -ErrorAction SilentlyContinue
+
+          Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 15
+          Get-Service -Name "RustDesk" | Format-List Name, Status, StartType
 
       - name: Set RustDesk permanent password
         run: |
-          $password = "$7"
-          & "$env:RUSTDESK_EXE" --password "$password"
+          & "$env:RUSTDESK_EXE" --password "$8"
           Start-Sleep -Seconds 5
 
       - name: Get RustDesk ID
         run: |
           $id = $null
-          for ($i = 0; $i -lt 18; $i++) {
+          for ($i = 0; $i -lt 24; $i++) {
             $id = (& "$env:RUSTDESK_EXE" --get-id) 2>$null
             if ($id -and $id.Trim().Length -gt 0) { break }
             Start-Sleep -Seconds 5
           }
-
           if (-not $id) {
-            Write-Error "Failed to retrieve RustDesk ID. Service may not be running."
+            Write-Error "Failed to retrieve RustDesk ID."
             exit 1
           }
 
@@ -93,21 +96,13 @@ jobs:
           Write-Host " RustDesk is ready."
           Write-Host " ID:       $($id.Trim())"
           Write-Host " Password: (the PASSWORD input you provided)"
-          Write-Host " Client:   https://rustdesk.com/  (download for your OS)"
           Write-Host "==============================================="
 
-      # Keep alive + countdown (just under the 6h job limit)
-      - name: Keep machine alive with timer
+      - name: Keep machine alive (350 min)
         run: |
-          Write-Host "Machine ready. Connect with RustDesk using the ID + password above."
-
           $totalMinutes = 350
           $interval = 30
-
-          for ($elapsed = 0; $elapsed -lt $totalMinutes; $elapsed += $interval) {
-            $remaining = $totalMinutes - $elapsed
-            Write-Host "Machine time remaining: $remaining minutes"
+          for ($e = 0; $e -lt $totalMinutes; $e += $interval) {
+            Write-Host "Machine time remaining: $($totalMinutes - $e) minutes"
             Start-Sleep -Seconds ($interval * 60)
           }
-
-          Write-Host "Session time completed."
