@@ -38,45 +38,39 @@ jobs:
           pip show requests
           go version
 
-      - name: Install RustDesk (with timeout + force-kill)
+      - name: Install RustDesk (portable - no installer)
         run: |
           $url = "https://github.com/rustdesk/rustdesk/releases/download/1.3.8/rustdesk-1.3.8-x86_64.exe"
-          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\rustdesk.exe"
+          $dir = "C:\Program Files\RustDesk"
+          $exe = "$dir\rustdesk.exe"
 
-          Write-Host "Launching installer (max 2 min)..."
-          $proc = Start-Process "$env:TEMP\rustdesk.exe" `
-            -ArgumentList "--silent-install" -PassThru
-          $exited = $proc.WaitForExit(120000)
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile $exe
 
-          if (-not $exited) {
-            Write-Host "Installer hung — killing it."
-            Get-Process -Name "rustdesk*" -ErrorAction SilentlyContinue |
-              Stop-Process -Force
-            Start-Sleep -Seconds 5
-          }
-
-          $exe = "C:\Program Files\RustDesk\rustdesk.exe"
           if (-not (Test-Path $exe)) {
-            Write-Error "RustDesk binary missing at $exe"
+            Write-Error "Download failed"
             exit 1
           }
+          Write-Host "RustDesk binary placed at $exe"
           "RUSTDESK_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Install and start RustDesk service
+      - name: Register and start RustDesk service
         run: |
-          $proc = Start-Process "$env:RUSTDESK_EXE" `
-            -ArgumentList "--install-service" -PassThru
+          # Register service (this command exits quickly when run on the binary directly)
+          $proc = Start-Process "$env:RUSTDESK_EXE" -ArgumentList "--install-service" -PassThru
           $proc.WaitForExit(60000) | Out-Null
-          Get-Process -Name "rustdesk*" -ErrorAction SilentlyContinue |
-            Where-Object { $_.Id -eq $proc.Id } | Stop-Process -Force -ErrorAction SilentlyContinue
+          if (-not $proc.HasExited) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
 
+          Start-Sleep -Seconds 10
           Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 15
+          Start-Sleep -Seconds 10
           Get-Service -Name "RustDesk" | Format-List Name, Status, StartType
 
       - name: Set RustDesk permanent password
         run: |
-          & "$env:RUSTDESK_EXE" --password "$8"
+          & "$env:RUSTDESK_EXE" --password "$9"
           Start-Sleep -Seconds 5
 
       - name: Get RustDesk ID
