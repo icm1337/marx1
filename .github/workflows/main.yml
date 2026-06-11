@@ -1,18 +1,31 @@
-name: Chrome Remote Desktop (Windows)
+name: RustDesk Remote Desktop Windows
 
 on:
   workflow_dispatch:
     inputs:
-      CODE:
-        description: "Paste ONLY the 4/... token from https://remotedesktop.google.com/headless"
-        required: true
-      PIN:
-        description: "6+ digit PIN"
+      RUSTDESK_PASSWORD:
+        description: "RustDesk unattended access password"
         required: true
         default: "123456"
+      RUSTDESK_ID_SERVER:
+        description: "Optional RustDesk ID server"
+        required: false
+        default: ""
+      RUSTDESK_RELAY_SERVER:
+        description: "Optional RustDesk relay server"
+        required: false
+        default: ""
+      RUSTDESK_API_SERVER:
+        description: "Optional RustDesk API server"
+        required: false
+        default: ""
+      RUSTDESK_KEY:
+        description: "Optional RustDesk server key"
+        required: false
+        default: ""
 
 jobs:
-  crd:
+  rustdesk:
     runs-on: windows-2022
 
     steps:
@@ -45,44 +58,112 @@ jobs:
           pip show requests
           go version
 
-      # Install Chrome Remote Desktop
-      - name: Download Chrome Remote Desktop Host
+      # Install RustDesk
+      - name: Download RustDesk
         run: |
-          Invoke-WebRequest `
-            -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" `
-            -OutFile "crdhost.msi"
+          Write-Host "Getting latest RustDesk release..."
 
-      - name: Install Chrome Remote Desktop Host
+          $release = Invoke-RestMethod "https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
+
+          $asset = $release.assets | Where-Object {
+            $_.name -match "x86_64.*\.exe$" -and
+            $_.name -notmatch "sciter" -and
+            $_.name -notmatch "aarch64"
+          } | Select-Object -First 1
+
+          if (-not $asset) {
+            Write-Error "Could not find RustDesk Windows x86_64 installer."
+            exit 1
+          }
+
+          Write-Host "Downloading $($asset.name)"
+          Invoke-WebRequest $asset.browser_download_url -OutFile "rustdesk.exe"
+
+      - name: Install RustDesk
         run: |
-          Start-Process msiexec.exe -ArgumentList '/i crdhost.msi /quiet /norestart' -Wait
+          Write-Host "Installing RustDesk..."
 
-      # Register CRD
-      - name: Register Chrome Remote Desktop
+          Start-Process ".\rustdesk.exe" -ArgumentList "--silent-install" -Wait
+
+          Start-Sleep -Seconds 10
+
+          $rustdeskPath = "C:\Program Files\RustDesk\rustdesk.exe"
+
+          if (-not (Test-Path $rustdeskPath)) {
+            Write-Error "RustDesk installation failed. rustdesk.exe not found."
+            exit 1
+          }
+
+          Write-Host "RustDesk installed successfully."
+
+      - name: Configure RustDesk
         run: |
-          $token = "${{ github.event.inputs.CODE }}"
-          $pin   = "${{ github.event.inputs.PIN }}"
+          $rustdeskPath = "C:\Program Files\RustDesk\rustdesk.exe"
 
-          $exe = "${env:ProgramFiles(x86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
+          $password = "$ github.event.inputs.RUSTDESK_PASSWORD "
+          $idServer = "$ github.event.inputs.RUSTDESK_ID_SERVER "
+          $relayServer = "$ github.event.inputs.RUSTDESK_RELAY_SERVER "
+          $apiServer = "$ github.event.inputs.RUSTDESK_API_SERVER "
+          $key = "$ github.event.inputs.RUSTDESK_KEY "
 
-          & $exe `
-            --code="$token" `
-            --redirect-url="https://remotedesktop.google.com/_/oauthredirect" `
-            --name=$env:COMPUTERNAME `
-            --pin="$pin"
+          Write-Host "Starting RustDesk service..."
+
+          Start-Service RustDesk -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 5
+
+          Write-Host "Setting RustDesk password..."
+          & $rustdeskPath --password $password
+
+          if ($idServer -ne "") {
+            Write-Host "Setting RustDesk ID server..."
+            & $rustdeskPath --config rendezvous-server=$idServer
+          }
+
+          if ($relayServer -ne "") {
+            Write-Host "Setting RustDesk relay server..."
+            & $rustdeskPath --config relay-server=$relayServer
+          }
+
+          if ($apiServer -ne "") {
+            Write-Host "Setting RustDesk API server..."
+            & $rustdeskPath --config api-server=$apiServer
+          }
+
+          if ($key -ne "") {
+            Write-Host "Setting RustDesk key..."
+            & $rustdeskPath --config key=$key
+          }
+
+          Restart-Service RustDesk -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 10
+
+      - name: Show RustDesk connection info
+        run: |
+          $rustdeskPath = "C:\Program Files\RustDesk\rustdesk.exe"
+
+          Write-Host "Getting RustDesk ID..."
+          $id = & $rustdeskPath --get-id
+
+          Write-Host "=========================================="
+          Write-Host "RustDesk is ready."
+          Write-Host "RustDesk ID: $id"
+          Write-Host "Password: $ github.event.inputs.RUSTDESK_PASSWORD "
+          Write-Host "Use the RustDesk app to connect."
+          Write-Host "=========================================="
 
       # Keep alive + countdown
-      - name: Keep machine alive with timer (6 hours)
+      - name: Keep machine alive with timer 6 hours
         run: |
           Write-Host "Machine ready."
-          Write-Host "Connect at: https://remotedesktop.google.com/access"
+          Write-Host "Connect using RustDesk."
 
           $totalMinutes = 360
           $interval = 30
 
           for ($elapsed = 0; $elapsed -lt $totalMinutes; $elapsed += $interval) {
-              $remaining = $totalMinutes - $elapsed
-              Write-Host "Machine time remaining: $remaining minutes"
-              Start-Sleep -Seconds ($interval * 60)
+            $remaining = $totalMinutes - $elapsed
+            Write-Host "Machine time remaining: $remaining minutes"
+            Start-Sleep -Seconds ($interval * 60)
           }
 
           Write-Host "Session time completed."
