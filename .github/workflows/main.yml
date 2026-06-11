@@ -1,102 +1,88 @@
-name: RustDesk Remote Desktop (Windows)
+name: Chrome Remote Desktop (Windows)
 
 on:
   workflow_dispatch:
     inputs:
-      PASSWORD:
-        description: "Permanent password for RustDesk (8+ chars)"
+      CODE:
+        description: "Paste ONLY the 4/... token from https://remotedesktop.google.com/headless"
         required: true
-        default: "ChangeMe123!"
+      PIN:
+        description: "6+ digit PIN"
+        required: true
+        default: "123456"
 
 jobs:
-  rustdesk:
+  crd:
     runs-on: windows-2022
-    timeout-minutes: 360
 
     steps:
       - name: Show system info
         run: systeminfo
 
+      # Install tools
       - name: Install 7-Zip, Python, and Go
         run: |
+          Write-Host "Downloading installers..."
+
           Invoke-WebRequest "https://github.com/ip7z/7zip/releases/download/25.01/7z2501-x64.exe" -OutFile "7zip.exe"
           Invoke-WebRequest "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" -OutFile "python.exe"
           Invoke-WebRequest "https://go.dev/dl/go1.22.5.windows-amd64.msi" -OutFile "go.msi"
 
-          Start-Process ".\7zip.exe"  -ArgumentList "/S" -Wait
-          Start-Process ".\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
-          Start-Process "msiexec.exe"  -ArgumentList "/i go.msi /quiet /norestart" -Wait
+          Write-Host "Installing..."
 
-      - name: Install Python requests
+          Start-Process ".\7zip.exe" -ArgumentList "/S" -Wait
+          Start-Process ".\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
+          Start-Process "msiexec.exe" -ArgumentList "/i go.msi /quiet /norestart" -Wait
+
+      - name: Install Python requests package
         run: |
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Verify installs
+      - name: Verify installations
         run: |
           python --version
           pip show requests
           go version
 
-      - name: Install RustDesk (portable - no installer)
+      # Install Chrome Remote Desktop
+      - name: Download Chrome Remote Desktop Host
         run: |
-          $url = "https://github.com/rustdesk/rustdesk/releases/download/1.3.8/rustdesk-1.3.8-x86_64.exe"
-          $dir = "C:\Program Files\RustDesk"
-          $exe = "$dir\rustdesk.exe"
+          Invoke-WebRequest `
+            -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" `
+            -OutFile "crdhost.msi"
 
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          Invoke-WebRequest -Uri $url -OutFile $exe
-
-          if (-not (Test-Path $exe)) {
-            Write-Error "Download failed"
-            exit 1
-          }
-          Write-Host "RustDesk binary placed at $exe"
-          "RUSTDESK_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Register and start RustDesk service
+      - name: Install Chrome Remote Desktop Host
         run: |
-          # Register service (this command exits quickly when run on the binary directly)
-          $proc = Start-Process "$env:RUSTDESK_EXE" -ArgumentList "--install-service" -PassThru
-          $proc.WaitForExit(60000) | Out-Null
-          if (-not $proc.HasExited) {
-            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-          }
+          Start-Process msiexec.exe -ArgumentList '/i crdhost.msi /quiet /norestart' -Wait
 
-          Start-Sleep -Seconds 10
-          Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 10
-          Get-Service -Name "RustDesk" | Format-List Name, Status, StartType
-
-      - name: Set RustDesk permanent password
+      # Register CRD
+      - name: Register Chrome Remote Desktop
         run: |
-          & "$env:RUSTDESK_EXE" --password "$9"
-          Start-Sleep -Seconds 5
+          $token = "${{ github.event.inputs.CODE }}"
+          $pin   = "${{ github.event.inputs.PIN }}"
 
-      - name: Get RustDesk ID
+          $exe = "${env:ProgramFiles(x86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
+
+          & $exe `
+            --code="$token" `
+            --redirect-url="https://remotedesktop.google.com/_/oauthredirect" `
+            --name=$env:COMPUTERNAME `
+            --pin="$pin"
+
+      # Keep alive + countdown
+      - name: Keep machine alive with timer (6 hours)
         run: |
-          $id = $null
-          for ($i = 0; $i -lt 24; $i++) {
-            $id = (& "$env:RUSTDESK_EXE" --get-id) 2>$null
-            if ($id -and $id.Trim().Length -gt 0) { break }
-            Start-Sleep -Seconds 5
-          }
-          if (-not $id) {
-            Write-Error "Failed to retrieve RustDesk ID."
-            exit 1
-          }
+          Write-Host "Machine ready."
+          Write-Host "Connect at: https://remotedesktop.google.com/access"
 
-          Write-Host "==============================================="
-          Write-Host " RustDesk is ready."
-          Write-Host " ID:       $($id.Trim())"
-          Write-Host " Password: (the PASSWORD input you provided)"
-          Write-Host "==============================================="
-
-      - name: Keep machine alive (350 min)
-        run: |
-          $totalMinutes = 350
+          $totalMinutes = 360
           $interval = 30
-          for ($e = 0; $e -lt $totalMinutes; $e += $interval) {
-            Write-Host "Machine time remaining: $($totalMinutes - $e) minutes"
-            Start-Sleep -Seconds ($interval * 60)
+
+          for ($elapsed = 0; $elapsed -lt $totalMinutes; $elapsed += $interval) {
+              $remaining = $totalMinutes - $elapsed
+              Write-Host "Machine time remaining: $remaining minutes"
+              Start-Sleep -Seconds ($interval * 60)
           }
+
+          Write-Host "Session time completed."
