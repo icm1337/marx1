@@ -18,6 +18,29 @@ jobs:
           Invoke-WebRequest "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" -OutFile "python.exe"
           Start-Process ".\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
 
+      - name: Install 7-Zip
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://github.com/ip7z/7zip/releases/download/25.01/7z2501-x64.exe" -OutFile "7zip.exe"
+          Start-Process ".\7zip.exe" -ArgumentList "/S" -Wait
+          # Add default install dir to PATH for later steps
+          "C:\Program Files\7-Zip" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Go
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://go.dev/dl/go1.22.5.windows-amd64.msi" -OutFile "go.msi"
+          Start-Process "msiexec.exe" -ArgumentList "/i go.msi /quiet /norestart" -Wait
+          # Add Go to PATH for later steps
+          "C:\Program Files\Go\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify toolchain
+        shell: powershell
+        run: |
+          python --version
+          go version
+          7z i
+
       - name: Install Python packages
         shell: powershell
         run: |
