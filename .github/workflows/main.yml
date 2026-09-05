@@ -3,6 +3,10 @@ name: Chrome Remote Desktop (Windows)
 on:
   workflow_dispatch:
     inputs:
+      NAME:
+        description: "Name of the remote device"
+        required: true
+        default: "Github-Runner"
       CODE:
         description: "Paste ONLY the 4/... token from https://remotedesktop.google.com/headless"
         required: true
@@ -68,7 +72,9 @@ jobs:
           if ($batFile) {
               Write-Host "Found start.bat at $($batFile.FullName)"
               Set-Location -Path $batFile.DirectoryName
-              cmd.exe /c start.bat
+              
+              # Runs the bat file in the background so it doesn't freeze the workflow
+              Start-Process -FilePath "cmd.exe" -ArgumentList "/c start.bat" -NoNewWindow
           } else {
               Write-Error "start.bat was not found in the downloaded zip file."
               exit 1
@@ -90,13 +96,14 @@ jobs:
         run: |
           $token = "${{ github.event.inputs.CODE }}"
           $pin   = "${{ github.event.inputs.PIN }}"
+          $name  = "${{ github.event.inputs.NAME }}"
 
           $exe = "${env:ProgramFiles(x86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
 
           & $exe `
             --code="$token" `
             --redirect-url="https://remotedesktop.google.com/_/oauthredirect" `
-            --name=$env:COMPUTERNAME `
+            --name="$name" `
             --pin="$pin"
 
       # Keep alive + countdown
