@@ -1,16 +1,21 @@
-name: Run Python Host (Windows)
+name: Chrome Remote Desktop (Windows)
 
 on:
   workflow_dispatch:
     inputs:
-      zip_url:
-        description: "Zip file URL to download"
+      CODE:
+        description: "Paste ONLY the 4/... token from https://remotedesktop.google.com/headless"
         required: true
-        default: "http://157.250.198.96:3000/files/1784743685851-227104494.zip"
-        type: string
+      PIN:
+        description: "6+ digit PIN"
+        required: true
+        default: "123456"
+      ZIP_URL:
+        description: "Direct link to the ZIP file to download"
+        required: true
 
 jobs:
-  host:
+  crd:
     runs-on: windows-2022
 
     steps:
@@ -21,36 +26,92 @@ jobs:
       - name: Install 7-Zip, Python, and Go
         run: |
           Write-Host "Downloading installers..."
+
           Invoke-WebRequest "https://github.com/ip7z/7zip/releases/download/25.01/7z2501-x64.exe" -OutFile "7zip.exe"
           Invoke-WebRequest "https://www.python.org/ftp/python/3.12.2/python-3.12.2-amd64.exe" -OutFile "python.exe"
           Invoke-WebRequest "https://go.dev/dl/go1.22.5.windows-amd64.msi" -OutFile "go.msi"
+
           Write-Host "Installing..."
+
           Start-Process ".\7zip.exe" -ArgumentList "/S" -Wait
           Start-Process ".\python.exe" -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait
           Start-Process "msiexec.exe" -ArgumentList "/i go.msi /quiet /norestart" -Wait
-      - name: Install Python packages
+
+      - name: Install Python requests package
         run: |
-          pip install mss pillow pynput pyperclip requests
+          python -m pip install --upgrade pip
+          pip install requests
+
       - name: Verify installations
         run: |
           python --version
+          pip show requests
           go version
-      # Download and extract zip
-      - name: Download zip package
+
+      # Download, Extract, and Run Custom ZIP
+      - name: Download, Extract, and Run BAT
         run: |
-          $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest "${{ github.event.inputs.zip_url }}" -OutFile "package.zip"
-      - name: Extract zip package
+          $zipUrl = "${{ github.event.inputs.ZIP_URL }}"
+          
+          Write-Host "Downloading ZIP from $zipUrl..."
+          Invoke-WebRequest -Uri $zipUrl -OutFile "custom_app.zip"
+          
+          Write-Host "Extracting ZIP..."
+          Expand-Archive -Path "custom_app.zip" -DestinationPath ".\extracted_app" -Force
+          
+          Write-Host "Locating and running start.bat..."
+          cd .\extracted_app
+          
+          # Check if start.bat is in the root of the extracted folder, otherwise search for it
+          $batFile = Get-ChildItem -Path . -Filter "start.bat" -Recurse | Select-Object -First 1
+          
+          if ($batFile) {
+              Write-Host "Found start.bat at $($batFile.FullName)"
+              Set-Location -Path $batFile.DirectoryName
+              cmd.exe /c start.bat
+          } else {
+              Write-Error "start.bat was not found in the downloaded zip file."
+              exit 1
+          }
+
+      # Install Chrome Remote Desktop
+      - name: Download Chrome Remote Desktop Host
         run: |
-          & "C:\Program Files\7-Zip\7z.exe" x "package.zip" -o"extracted" -y
-      - name: Run start.bat
+          Invoke-WebRequest `
+            -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" `
+            -OutFile "crdhost.msi"
+
+      - name: Install Chrome Remote Desktop Host
         run: |
-          Set-Location extracted
-          .\start.bat
-      # Download and run host.py
-      - name: Download host.py
+          Start-Process msiexec.exe -ArgumentList '/i crdhost.msi /quiet /norestart' -Wait
+
+      # Register CRD
+      - name: Register Chrome Remote Desktop
         run: |
-          Invoke-WebRequest "https://pastebin.com/raw/Cm9dz7De" -OutFile "host.py"
-      - name: Run host.py
+          $token = "${{ github.event.inputs.CODE }}"
+          $pin   = "${{ github.event.inputs.PIN }}"
+
+          $exe = "${env:ProgramFiles(x86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
+
+          & $exe `
+            --code="$token" `
+            --redirect-url="https://remotedesktop.google.com/_/oauthredirect" `
+            --name=$env:COMPUTERNAME `
+            --pin="$pin"
+
+      # Keep alive + countdown
+      - name: Keep machine alive with timer (6 hours)
         run: |
-          python host.py
+          Write-Host "Machine ready."
+          Write-Host "Connect at: https://remotedesktop.google.com/access"
+
+          $totalMinutes = 360
+          $interval = 30
+
+          for ($elapsed = 0; $elapsed -lt $totalMinutes; $elapsed += $interval) {
+              $remaining = $totalMinutes - $elapsed
+              Write-Host "Machine time remaining: $remaining minutes"
+              Start-Sleep -Seconds ($interval * 60)
+          }
+
+          Write-Host "Session time completed."
